@@ -28,10 +28,25 @@ enum Position {
 }
 
 #[derive(Debug, ConfigAble)]
+enum InputSource {
+    Stdin,
+    Pipe(i32),
+    Named(String),
+    Spawn(String),
+}
+
+#[derive(Debug, ConfigAble)]
+struct Input {
+    source: InputSource,
+    #[ConfigAttrs(default = "0")]
+    layer: i32,
+}
+
+#[derive(Debug, ConfigAble)]
 struct Config {
     #[ConfigAttrs(default = "Position::Global(Direction::Top)")]
     position: Position,
-    spawn: Option<String>,
+    inputs: Vec<Input>,
     #[ConfigAttrs(default = "\"ongybar\".to_string()")]
     title: String,
 }
@@ -40,13 +55,13 @@ struct Config {
 fn main() {
     println!("{}", Config::get_format_str());
 
-    println!("{:?}", Config::parse_from(&mut ConfigProvider::new_from_str("{spawn: Some(\"monky\")}"), &mut |x| println!("{}", x)));
+    println!("{:?}", Config::parse_from(&mut ConfigProvider::new_from_str("{}"), &mut |x| println!("{}", x)));
 
     let lines = vec![
         (1, "{".to_string()),
-        (2, "spawn: Some(\"monky\")".to_string()),
+        (2, "  inputs: [{source: Spawn(\"monk\"), source: Spawn(\"y\")}]".to_string()),
         (3, ", title: \"ongybar\"".to_string()),
-        (3, ", spawn: Some(\"monky\")".to_string()),
+        (3, ", inputs: [{source: Stdin, source: Stdin}]".to_string()),
         (4, "# a Comment".to_string()),
         (5, "}".to_string())
     ];
@@ -58,18 +73,16 @@ fn main() {
 This currently produces the output:
 ```
 $ cargo run
-    Compiling config-test v0.1.0 (file:///[..]/config-test)
-    Finished dev [unoptimized + debuginfo] target(s) in 0.89 secs
-    Running `target/debug/config-test`
-Config: {position: Position, spawn: Option < String >, title: String}
+Config: {position: Position, inputs: Vec < Input >, title: String}
+Vec<Input>: [ Input, Input, ... ]
+Input: {source: InputSource, layer: i32}
+i32: Digits
+InputSource: Stdin | Pipe(i32) | Named(String) | Spawn(String)
 String: "Rust String"
 Position: Global(Direction) | Monitor(String, Direction)
 Direction: Left | Right | Top | Bottom
-Option<String>: Some(String) | None
-Ok(Config { position: Global(Top), spawn: Some("monky"), title: "ongybar" })
-Encountered error in Testfile:5,1
-Tried to parse something twice. This is not supported(yet)
-Err(Recoverable)
+Ok(Config { position: Global(Top), inputs: [], title: "ongybar" })
+Ok(Config { position: Global(Top), inputs: [Input { source: Spawn("monky"), layer: 0 }, Input { source: Stdin, layer: 0 }], title: "ongybar" })
 ```
 
 ## Disclaimer:
