@@ -409,11 +409,6 @@ struct Config {
     title: String,
 }
 
-#[derive(Debug, ConfigAble)]
-enum TestEnum {
-    TestCon{s: String, c: char},
-}
-
 #[cfg(not(test))]
 fn main() {
     println!("{}", Config::get_format_str());
