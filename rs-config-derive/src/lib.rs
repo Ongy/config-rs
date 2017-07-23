@@ -146,8 +146,6 @@ fn impl_parse_named<'a, I>(fields: I, tok: &mut quote::Tokens)
     });
 
     tok.append("}");
-
-
 }
 
 fn impl_parse_ordered<'a, I>(fields: I, tok: &mut quote::Tokens)
@@ -521,8 +519,6 @@ fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
                         tok.append(quote!{ if nxt.starts_with(stringify!(#vname))});
                         tok.append("{");
                         tok.append(quote!{ provider.consume(stringify!(#vname).len(), fun)?;});
-                        impl_parse_named(fields.iter(), tok);
-
                         impl_parse_named(fields.iter(), tok);
 
                         let mut ret_expr = quote::Tokens::new();
