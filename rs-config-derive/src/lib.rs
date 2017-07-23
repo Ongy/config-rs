@@ -84,12 +84,12 @@ fn impl_parse_named<'a, I>(fields: I, tok: &mut quote::Tokens)
         };
         let ty = &field.ty;
 
-        tok.append(quote!(let mut #name:ParseTmp<#ty> = ParseTmp::Empty;));
+        tok.append(quote!{let mut #name:ParseTmp<#ty> = ParseTmp::new(stringify!(#name).into());});
         match get_attrs(field).and_then(|x| find_attr_lit("default", x)) {
             Some(x) => {
                 match x {
                     &syn::Lit::Str(ref val, _) => {
-                        tok.append(quote!{#name = ParseTmp::Default});
+                        tok.append(quote!{#name.set_default});
                         tok.append(format!("({});", val));
                     }
                     _ => {
@@ -154,7 +154,7 @@ fn impl_parse_ordered<'a, I>(fields: I, tok: &mut quote::Tokens)
         let ty = &field.ty;
 
         tok.append(format!("let var{} =", index));
-        
+
         tok.append(quote!{<#ty as ConfigAble>::parse_from(provider, fun)?; });
     }
     tok.append(quote!{provider.consume_char(')', fun)?;});
@@ -361,13 +361,15 @@ fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
                         impl_parse_named(fields.iter(), tok);
 
                         impl_parse_named(fields.iter(), tok);
-                        tok.append("return Ok(");
-                        tok.append(quote!{#name::#vname});
-                        tok.append("{");
+
+                        let mut ret_expr = quote::Tokens::new();
+                        ret_expr.append("return Ok(");
+                        ret_expr.append(quote!{#name::#vname});
+                        ret_expr.append("{");
 
                         for (i, ref field) in fields.iter().enumerate() {
                             if i > 0 {
-                                tok.append(",");
+                                ret_expr.append(",");
                             }
 
                             let name = match field.ident {
@@ -375,12 +377,16 @@ fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
                                 None => panic!("Encountered unnamed field while trying to derive named field parsing")
                             };
 
-                            tok.append(quote!{ #name: #name.get_value()? });
+                            tok.append(format!("let {}_r = {}.get_value(fun);", name, name));
 
+
+                            ret_expr.append(format!("{}: {}_r?", name, name));
                         }
 
-                        tok.append("});");
-                        tok.append("}");
+                        ret_expr.append("});");
+                        ret_expr.append("}");
+
+                        tok.append(ret_expr);
                     },
                 }
             }
@@ -408,13 +414,14 @@ fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
                 },
                 &syn::VariantData::Struct(ref fields) => {
                     impl_parse_named(fields.iter(), tok);
-                    tok.append("return Ok(");
-                    tok.append(quote!{#name});
-                    tok.append("{");
+                    let mut ret_expr = quote::Tokens::new();
+                    ret_expr.append("return Ok(");
+                    ret_expr.append(quote!{#name});
+                    ret_expr.append("{");
 
                     for (i, ref field) in fields.iter().enumerate() {
                         if i > 0 {
-                            tok.append(",");
+                            ret_expr.append(",");
                         }
 
                         let name = match field.ident {
@@ -422,11 +429,15 @@ fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
                             None => panic!("Encountered unnamed field while trying to derive named field parsing")
                         };
 
-                        tok.append(quote!{ #name: #name.get_value()? });
+                        tok.append(format!("let {}_r = {}.get_value(fun);", name, name));
 
+
+                        ret_expr.append(format!("{}: {}_r?", name, name));
                     }
 
-                    tok.append("});");
+                    ret_expr.append("});");
+
+                    tok.append(ret_expr);
                 },
             }
         }

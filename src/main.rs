@@ -15,41 +15,56 @@ pub enum ParseError {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ParseTmp<T> {
+enum ParseTmpI<T> {
     Empty,
     Default(T),
     Found(T),
     Failed,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct ParseTmp<T> {
+    value: ParseTmpI<T>,
+    name: String,
+}
+
 impl<T> ParseTmp<T> {
+
+    fn new(name: String) -> Self {
+        return Self { value: ParseTmpI::Empty, name: name };
+    }
+
+    fn set_default(&mut self, val: T) {
+        self.value = ParseTmpI::Default(val);
+    }
+
     fn push_found<I, F>(&mut self, rst: Result<T, ParseError>, provider: &ConfigProvider<I>, fun: &mut F) -> Result<(), ParseError>
         where F: FnMut(String) {
         match rst {
             Ok(val) => {
-                match self {
-                    &mut ParseTmp::Empty => {
-                        *self = ParseTmp::Found(val);
+                match &self.value {
+                    &ParseTmpI::Empty => {
+                        self.value = ParseTmpI::Found(val);
                         return Ok(());
                     },
-                    &mut ParseTmp::Failed => {
+                    &ParseTmpI::Failed => {
                         return Ok(());
                     },
-                    &mut ParseTmp::Found(_) => {
+                    &ParseTmpI::Found(_) => {
                         provider.print_error(0, fun);
-                        fun("Tried to parse something twice. This is not supported(yet)".to_string());
-                        *self = ParseTmp::Failed;
+                        fun(format!("Tried to parse {} twice. This is not supported(yet)", self.name));
+                        self.value = ParseTmpI::Failed;
                         return Ok(());
                     },
-                    &mut ParseTmp::Default(_) => {
-                        *self = ParseTmp::Found(val);
+                    &ParseTmpI::Default(_) => {
+                        self.value = ParseTmpI::Found(val);
                         return Ok(());
                     },
                 }
             },
             Err(ParseError::Recoverable) => {
-                fun("Tried to push Recoverable error. Will continue".to_string());
-                *self = ParseTmp::Failed;
+                fun(format!("Tried to push Recoverable error for {}. Will continue", self.name));
+                self.value = ParseTmpI::Failed;
                 return Ok(());
             },
             Err(x) => {
@@ -61,17 +76,24 @@ impl<T> ParseTmp<T> {
 
 impl<T> ParseTmp<T>
     where T: ConfigAble {
-    fn get_value(self) -> Result<T, ParseError> {
-        match self {
-            ParseTmp::Found(x) => Ok(x),
-            ParseTmp::Default(x) => Ok(x),
-            ParseTmp::Empty => {
+    fn get_value<F>(self, fun: &mut F) -> Result<T, ParseError>
+        where F: FnMut(String) {
+        match self.value {
+            ParseTmpI::Found(x) => Ok(x),
+            ParseTmpI::Default(x) => Ok(x),
+            ParseTmpI::Empty => {
                 match T::get_default() {
                     Ok(x) => Ok(x),
-                    Err(_) => Err(ParseError::Recoverable),
+                    Err(_) => {
+                        fun(format!("Couldn't default {}. You need to provide a value", self.name));
+                        return Err(ParseError::Recoverable);
+                    }
                 }
             },
-            _ => Err(ParseError::Recoverable),
+            ParseTmpI::Failed => {
+                fun(format!("Can't get a value for {} since something failed.", self.name));
+                return Err(ParseError::Recoverable);
+            },
         }
     }
 }
