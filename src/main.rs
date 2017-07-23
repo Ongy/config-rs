@@ -23,7 +23,7 @@ pub enum ParseTmp<T> {
 }
 
 impl<T> ParseTmp<T> {
-    fn push_found<F>(&mut self, rst: Result<T, ParseError>, fun: &mut F) -> Result<(), ParseError>
+    fn push_found<I, F>(&mut self, rst: Result<T, ParseError>, provider: &ConfigProvider<I>, fun: &mut F) -> Result<(), ParseError>
         where F: FnMut(String) {
         match rst {
             Ok(val) => {
@@ -36,7 +36,8 @@ impl<T> ParseTmp<T> {
                         return Ok(());
                     },
                     &mut ParseTmp::Found(_) => {
-                        fun("Tried to parse something twice. Gonna fail, this isn't implemented yet".to_string());
+                        provider.print_error(0, fun);
+                        fun("Tried to parse something twice. This is not supported(yet)".to_string());
                         *self = ParseTmp::Failed;
                         return Ok(());
                     },
@@ -56,21 +57,31 @@ impl<T> ParseTmp<T> {
             },
         }
     }
+}
 
+impl<T> ParseTmp<T>
+    where T: ConfigAble {
     fn get_value(self) -> Result<T, ParseError> {
         match self {
             ParseTmp::Found(x) => Ok(x),
             ParseTmp::Default(x) => Ok(x),
+            ParseTmp::Empty => {
+                match T::get_default() {
+                    Ok(x) => Ok(x),
+                    Err(_) => Err(ParseError::Recoverable),
+                }
+            },
             _ => Err(ParseError::Recoverable),
         }
     }
 }
 
-trait ConfigAble
+pub trait ConfigAble
     where Self: std::marker::Sized {
 
     /* Internally used function. This takes care of deduplicating format strings */
-    fn get_format(set: &mut HashSet<String>) -> String;
+    fn get_format<F>(set: &mut HashSet<String>, fun: &mut F)
+       where  F: FnMut(&str);
 
     /* Semi-Internal function. don't rely on the format. Used to identify types */
     fn get_name() -> &'static str;
@@ -79,17 +90,29 @@ trait ConfigAble
      * This will also contain all formats of types used transitivly.
      */
     fn get_format_str() -> String {
+        let mut ret = String::new();
         let mut set = HashSet::new();
-        return Self::get_format(&mut set);
+        Self::get_format(&mut set, &mut |x| ret.push_str(x));
+        return ret;
     }
 
+    /* Parse the object from a ConfigProvider
+     *
+     */
     fn parse_from<I, F>(provider: &mut ConfigProvider<I>, fun: &mut F) -> Result<Self, ParseError>
         where I: std::iter::Iterator<Item=(usize, String)>,
               F: FnMut(String);
+
+    /* Get a default value For the type */
+    // TODO: Should the error type be something more serious?
+    fn get_default() -> Result<Self, ()>;
 }
 
 impl ConfigAble for String {
-    fn get_format(_: &mut HashSet<String>) -> String { String::from("String: \"Rust String\"\n") }
+    fn get_format<F>(_: &mut HashSet<String>, fun: &mut F) 
+        where F: FnMut(&str){
+        fun("String: \"Rust String\"");
+    }
 
     fn get_name() -> &'static str { "String" }
 
@@ -100,7 +123,7 @@ impl ConfigAble for String {
         if let Some(content) = provider.get_next() {
             match  str_lit(content.as_str()) {
                 Ok((count, ret)) => {
-                    provider.consume(count).unwrap();
+                    provider.consume(count, fun)?;
                     return Ok(ret);
                 },
                 Err(x) => {
@@ -111,13 +134,18 @@ impl ConfigAble for String {
         }
 
 
-        fun("At end of file :(".to_string());
+        fun("At end of file while parsing String :(".to_string());
         return Err(ParseError::Final);
     }
+
+    fn get_default() -> Result<Self, ()> { Err(()) }
 }
 
 impl ConfigAble for char {
-    fn get_format(_: &mut HashSet<String>) -> String { String::from("Char: 'Rust Char'\n") }
+    fn get_format<F>(_: &mut HashSet<String>, fun: &mut F) 
+        where F: FnMut(&str) {
+            fun("Char: 'Rust Char'");
+        }
 
     fn get_name() -> &'static str { "char" }
 
@@ -128,7 +156,7 @@ impl ConfigAble for char {
         if let Some(content) = provider.get_next() {
             match parse_char(content.as_str()) {
                 Ok((count, ret)) => {
-                    provider.consume(count).unwrap();
+                    provider.consume(count, fun)?;
                     return Ok(ret);
                 },
                 Err(x) => {
@@ -141,6 +169,114 @@ impl ConfigAble for char {
         fun("At end of file :(".to_string());
         return Err(ParseError::Final);
     }
+
+    fn get_default() -> Result<Self, ()> { Err(()) }
+}
+
+impl<T> ConfigAble for Option<T>
+    where T: ConfigAble {
+    fn get_format<F>(set: &mut HashSet<String>, fun: &mut F)
+        where F: FnMut(&str) {
+        // TODO: Re-do the newline appending
+        fun(format!("Option<{}>: Some({}) | None", T::get_name(), T::get_name()).as_str());
+        let key = T::get_name().to_string();
+
+        if !set.contains(&key) {
+            set.insert(T::get_name().to_string());
+
+            fun("\n");
+            T::get_format(set, fun);
+        }
+    }
+
+    fn get_name() -> &'static str {
+        concat!("Option<", /*T::get_name(),*/ ">")
+    }
+
+    fn parse_from<I, F>(provider: &mut ConfigProvider<I>, fun: &mut F) -> Result<Self, ParseError>
+        where I: std::iter::Iterator<Item=(usize, String)>,
+              F: FnMut(String) {
+
+        if let Some(content) = provider.get_next() {
+            if content.starts_with("None") {
+                provider.consume(4, fun)?;
+                return Ok(None);
+            }
+
+            if content.starts_with("Some") {
+                provider.consume(4, fun)?;
+                provider.consume_char('(', fun)?;
+                let ret = T::parse_from(provider, fun);
+                provider.consume_char(')', fun)?;
+                return Ok(Some(ret?));
+            }
+
+        }
+
+        fun("At end of file :(".to_string());
+        return Err(ParseError::Final);
+    }
+
+    fn get_default() -> Result<Self, ()> { 
+        match <T as ConfigAble>::get_default() {
+            Ok(x) => Ok(Some(x)),
+            _ => Ok(None),
+        }
+    }
+}
+
+
+impl<T> ConfigAble for Vec<T>
+    where T: ConfigAble {
+    fn get_format<F>(set: &mut HashSet<String>, fun: &mut F)
+        where F: FnMut(&str) {
+        // TODO: Re-do the newline appending
+        fun(format!("Vec<{}>: [ {}, {}, ... ]", T::get_name(), T::get_name(), T::get_name()).as_str());
+
+        let key = T::get_name().to_string();
+        if !set.contains(&key) {
+            set.insert(T::get_name().to_string());
+
+            fun("\n");
+            T::get_format(set, fun);
+        }
+    }
+
+    fn get_name() -> &'static str {
+        concat!("Vec<", /*T::get_name(),*/ ">")
+    }
+
+    fn parse_from<I, F>(provider: &mut ConfigProvider<I>, fun: &mut F) -> Result<Self, ParseError>
+        where I: std::iter::Iterator<Item=(usize, String)>,
+              F: FnMut(String) {
+
+        let mut first = true;
+        let mut ret = Vec::new();
+
+        provider.consume_char('[', fun)?;
+        loop {
+            if provider.is_at_end() {
+                provider.print_error(0, fun);
+                fun("Reached end of file while reading vector :(".to_string());
+                return Err(ParseError::Final);
+            }
+
+            if provider.peek_char() == Some(']') {
+                provider.consume(1, fun)?;
+                return Ok(ret);
+            }
+
+            if first {
+                first = false;
+            } else {
+                provider.consume_char(',', fun)?;
+            }
+
+            ret.push(T::parse_from(provider, fun)?);
+        }
+    }
+
+    fn get_default() -> Result<Self, ()> { Ok(Self::new()) }
 }
 
 #[derive(Debug, ConfigAble)]
@@ -159,25 +295,18 @@ enum Position {
 
 #[derive(Debug, ConfigAble)]
 struct Config {
+    #[ConfigAttrs(default = "Position::Global(Direction::Top)")]
     position: Position,
-    spawn: String,
+    spawn: Option<String>,
+    #[ConfigAttrs(default = "\"ongybar\".to_string()")]
+    title: String,
 }
 
 #[cfg(not(test))]
 fn main() {
-    let mut set = HashSet::new();
+    println!("{}", Config::get_format_str());
 
-    print!("{}", Config::get_format(&mut set));
-
-    let lines = vec![(1, "{".to_string()), (2, "position: Global(Top)".to_string()), (3, "spawn: \"monky\"".to_string()), (4, "}".to_string())];
-    let mut provider = ConfigProvider::new_with_provider(lines.into_iter(), "ExampleString".to_string());
-
-    print!("{:?}\n", Config::parse_from(&mut provider, &mut |x| println!("{}", x)));
-
-    let lines2 = vec![(1, "{".to_string()), (2, "position: Global(Top), position: Global(Bottom)".to_string()), (3, "spawn: \"monky\", spawn: \"monky\"".to_string()), (4, "}".to_string())];
-    let mut provider2 = ConfigProvider::new_with_provider(lines2.into_iter(), "ExampleString".to_string());
-
-    print!("{:?}\n", Config::parse_from(&mut provider2, &mut |x| println!("{}", x)));
+    println!("{:?}", Config::parse_from(&mut ConfigProvider::new_from_str("{spawn: Some(\"monky\")}"), &mut |x| println!("{}", x)));
 }
 
 #[derive(Debug)]
@@ -189,9 +318,40 @@ pub struct ConfigProvider<I> {
     line_it: I,
 }
 
+impl<I> ConfigProvider<I> {
+    pub fn get_next(&self) -> Option<String> {
+        if self.column >= self.line_str.len() {
+            return None;
+        }
+
+        unsafe {
+            let slice = self.line_str.slice_unchecked(self.column, self.line_str.len());
+            return Some(String::from(slice));
+        }
+    }
+
+    fn peek_char(&self) -> Option<char> {
+        self.line_str.chars().nth(self.column)
+    }
+
+
+    pub fn print_error<F>(&self, index: usize, fun: &mut F)
+        where F: FnMut(String) {
+        fun(format!("Encountered error in {}:{},{}", self.file, self.line, self.column + index + 1));
+    }
+
+    pub fn is_at_end(&self) -> bool {
+        return self.column == self.line_str.len();
+    }
+}
+
 impl ConfigProvider<std::option::IntoIter<(usize, String)>> {
-    pub fn new_from_line(line: String) -> ConfigProvider<std::option::IntoIter<(usize, String)>> {
-        return ConfigProvider::new_with_provider(Some((0, line)).into_iter(), "memory".to_string());
+    pub fn new_from_line(line: String) -> Self {
+        return Self::new_with_provider(Some((0, line)).into_iter(), "memory".to_string());
+    }
+
+    pub fn new_from_str(line: &str) -> Self {
+        return Self::new_from_line(line.to_string());
     }
 }
 
@@ -210,17 +370,13 @@ impl<I> ConfigProvider<I>
             match pos {
                 Some(0) => {},
                 Some(x) => {
-                    self.consume(x).unwrap();
+                    self.consume(x, &mut |_| {}).unwrap();
                 },
                 None => {
                     self.skip_current();
                 },
             }
         }
-    }
-
-    fn peek_char(&self) -> Option<char> {
-        self.line_str.chars().nth(self.column)
     }
 
     fn get_next_line(&mut self) {
@@ -248,22 +404,11 @@ impl<I> ConfigProvider<I>
         return ret;
     }
 
-    pub fn get_next(&self) -> Option<String> {
-        if self.column >= self.line_str.len() {
-            return None;
-        }
-
-        unsafe {
-            let slice = self.line_str.slice_unchecked(self.column, self.line_str.len());
-            return Some(String::from(slice));
-        }
-    }
-
     pub fn consume_char<F>(&mut self, c: char, fun: &mut F) -> Result<(), ParseError>
         where F: FnMut(String){
         //TODO: nth looks slooow
         if self.line_str.chars().nth(self.column) == Some(c) {
-            self.consume(1).unwrap();
+            self.consume(1, fun)?;
             return Ok(());
         }
 
@@ -272,9 +417,12 @@ impl<I> ConfigProvider<I>
         return Err(ParseError::Final);
     }
 
-    pub fn consume(&mut self, count: usize) -> Result<(), &'static str> {
+    pub fn consume<F>(&mut self, count: usize, fun: &mut F) -> Result<(), ParseError>
+        where F: FnMut(String) {
         if self.column + count > self.line_str.len() {
-            return Err("Cannot consume more than currently provided");
+            self.print_error(0, fun);
+            fun(format!("Tried to consume more than currently available: {}", count));
+            return Err(ParseError::Final);
         }
 
         self.column = self.column + count;
@@ -286,11 +434,6 @@ impl<I> ConfigProvider<I>
         }
 
         return Ok(());
-    }
-
-    pub fn print_error<F>(&self, index: usize, fun: &mut F)
-        where F: FnMut(String) {
-        fun(format!("Encountered error in {}:{},{}", self.file, self.line, self.column + index + 1));
     }
 }
 
@@ -304,7 +447,63 @@ mod test {
 
     #[test]
     fn test_string_format() {
-        assert!(String::get_format_str() == "String: \"Rust String\"\n");
+        assert!(String::get_format_str() == "String: \"Rust String\"");
+    }
+
+    #[test]
+    fn test_option_format() {
+        assert!(<Option<String> as ConfigAble>::get_format_str().starts_with("Option<String>: Some(String) | None\n"));
+    }
+
+    #[test]
+    fn test_option_parse() {
+        let mut builder = String::new();
+        let mut fun = |x: String| builder.push_str(x.as_str());
+        let mut provider = ConfigProvider::new_from_line("Some(\"TestStr\")".to_string());
+        assert!(<Option<String> as ConfigAble>::parse_from(&mut provider, &mut fun) == Ok(Some("TestStr".to_string())));
+        assert!(provider.get_next() == None);
+
+        let mut provider2 = ConfigProvider::new_from_line("None".to_string());
+        assert!(<Option<String> as ConfigAble>::parse_from(&mut provider2, &mut fun) == Ok(None));
+        assert!(provider2.get_next() == None);
+    }
+
+    #[test]
+    fn test_option_default() {
+        assert!(<Option<String> as ConfigAble>::get_default() == Ok(None));
+        assert!(<Option<Option<String>> as ConfigAble>::get_default() == Ok(Some(None)));
+    }
+
+
+    #[derive(ConfigAble, PartialEq, Eq)]
+    struct DefaultTest1(Option<String>, Option<String>);
+
+    #[derive(ConfigAble, PartialEq, Eq)]
+    struct DefaultTest2(Option<String>, String);
+
+    #[test]
+    fn test_default_struct() {
+        assert!(DefaultTest1::get_default() == Ok(DefaultTest1(None, None)));
+        assert!(DefaultTest2::get_default() == Err(()));
+    }
+
+
+    #[test]
+    fn test_vec_format() {
+        assert!(<Vec<char> as ConfigAble>::get_format_str().starts_with("Vec<char>: [ char, char, ... ]\n"));
+    }
+
+    #[test]
+    fn test_vec_parse() {
+        let mut builder = String::new();
+        let mut fun = |x: String| builder.push_str(x.as_str());
+        let mut provider = ConfigProvider::new_from_line("[]".to_string());
+        assert!(<Vec<char> as ConfigAble>::parse_from(&mut provider, &mut fun) == Ok(vec![]));
+        assert!(provider.get_next() == None);
+
+        let mut provider2 = ConfigProvider::new_from_line("[ '1', '2', '3' ]".to_string());
+        assert!(<Vec<char> as ConfigAble>::parse_from(&mut provider2, &mut fun) == Ok(vec!['1', '2', '3']));
+        assert!(provider2.get_next() == None);
     }
 
     #[derive(ConfigAble, PartialEq, Eq)]
@@ -315,7 +514,7 @@ mod test {
 
     #[test]
     fn test_simple_enum_format() {
-        assert!(SimpleEnum::get_format_str() == "SimpleEnum: SimpleCon1 | SimpleCon2\n");
+        assert!(SimpleEnum::get_format_str() == "SimpleEnum: SimpleCon1 | SimpleCon2");
         assert!(SimpleEnum::get_name() == "SimpleEnum");
     }
 
@@ -346,7 +545,7 @@ mod test {
 
     #[test]
     fn test_tuple_enum_format() {
-        assert!(TupleEnum::get_format_str() == "TupleEnum: TupleCon1(String) | TupleCon2(String)\nString: \"Rust String\"\n");
+        assert!(TupleEnum::get_format_str() == "TupleEnum: TupleCon1(String) | TupleCon2(String)\nString: \"Rust String\"");
         assert!(TupleEnum::get_name() == "TupleEnum");
     }
 
@@ -406,7 +605,7 @@ mod test {
 
     #[test]
     fn test_tuple_struct_format() {
-        assert!(TupleStruct::get_format_str().starts_with("TupleStruct: (String, char)\n"));
+        assert!(TupleStruct::get_format_str().starts_with("TupleStruct: (String, char)"));
     }
 
     #[test]
@@ -443,10 +642,10 @@ mod test {
 
         assert!(provider.get_next() == Some("This is a line".to_string()));
 
-        provider.consume(4).unwrap();
+        provider.consume(4, &mut |_| {}).unwrap();
         assert!(provider.get_next() == Some("is a line".to_string()));
 
-        provider.consume(9).unwrap();
+        provider.consume(9, &mut |_| {}).unwrap();
         assert!(provider.get_next() == None);
     }
 
@@ -456,11 +655,11 @@ mod test {
         let mut provider = ConfigProvider::new_with_provider(lines.into_iter(), "Testfile".to_string());
 
         assert!(provider.get_next() == Some("Line1   \n".to_string()));
-        provider.consume(5).unwrap();
+        provider.consume(5, &mut |_| {}).unwrap();
 
         assert!(provider.get_next() == Some("Line2".to_string()));
 
-        provider.consume(5).unwrap();
+        provider.consume(5, &mut |_| {}).unwrap();
         assert!(provider.get_next() == None);
     }
 
@@ -476,7 +675,7 @@ mod test {
         }
         assert!(val == "Encountered error in Testfile:1,3");
 
-        provider.consume(5).unwrap();
+        provider.consume(5, &mut |_| {}).unwrap();
 
         {
             let mut fun = |x| val = x;
@@ -491,7 +690,7 @@ mod test {
         let mut provider = ConfigProvider::new_with_provider(lines.into_iter(), "Testfile".to_string());
 
         assert!(provider.get_next() == Some("line".to_string()));
-        provider.consume(4).unwrap();
+        provider.consume(4, &mut |_| {}).unwrap();
 
         assert!(provider.get_next() == None);
     }
@@ -502,10 +701,10 @@ mod test {
         let mut provider = ConfigProvider::new_with_provider(lines.into_iter(), "Testfile".to_string());
 
         assert!(provider.get_next() == Some("line#3   #another".to_string()));
-        provider.consume(6).unwrap();
+        provider.consume(6, &mut |_| {}).unwrap();
 
         assert!(provider.get_next() == Some("#another".to_string()));
-        provider.consume(8).unwrap();
+        provider.consume(8, &mut |_| {}).unwrap();
 
         assert!(provider.get_next() == None);
     }

@@ -7,6 +7,41 @@ use proc_macro::TokenStream;
 
 use std::collections::HashSet;
 
+fn get_attrs(field: &syn::Field) -> Option<&Vec<syn::NestedMetaItem>> {
+    for ref attr in &field.attrs {
+        match attr.value {
+            syn::MetaItem::List(ref id, ref items) => {
+                if id == "ConfigAttrs" {
+                    return Some(items);
+                }
+            },
+            _ => {},
+        }
+    }
+
+    return None;
+}
+
+fn find_attr_lit<'a>(name: &str, attrs: &'a Vec<syn::NestedMetaItem>) -> Option<&'a syn::Lit> {
+    for attr in attrs {
+        match attr {
+            &syn::NestedMetaItem::MetaItem(ref val) => {
+                match val {
+                    &syn::MetaItem::NameValue(ref id, ref lit) => {
+                        if id == name {
+                            return Some(lit);
+                        }
+                    },
+                    _ => {},
+                }
+            },
+            _ => {},
+        }
+    }
+
+    return None;
+}
+
 fn impl_get_name(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
     let name = &ast.ident;
     tok.append("fn get_name() -> &'static str { ");
@@ -25,15 +60,15 @@ fn append_fields<'a, I>(fields: I, tok: &mut quote::Tokens, others: &mut HashSet
         if first {
             first = false;
         } else {
-            tok.append(quote!{ret.push_str(", ");});
+            tok.append(quote!{fun(", ");});
         }
         let ty = &field.ty;
 
         if let Some(ref id) = field.ident {
-            tok.append(quote!{ret.push_str(stringify!(#id)); ret.push_str(": ");});
+            tok.append(quote!{fun(stringify!(#id)); fun(": ");});
         }
 
-        tok.append(quote!{ret.push_str(stringify!(#ty));});
+        tok.append(quote!{fun(stringify!(#ty));});
         others.insert(ty);
     }
 }
@@ -50,12 +85,27 @@ fn impl_parse_named<'a, I>(fields: I, tok: &mut quote::Tokens)
         let ty = &field.ty;
 
         tok.append(quote!(let mut #name:ParseTmp<#ty> = ParseTmp::Empty;));
+        match get_attrs(field).and_then(|x| find_attr_lit("default", x)) {
+            Some(x) => {
+                match x {
+                    &syn::Lit::Str(ref val, _) => {
+                        tok.append(quote!{#name = ParseTmp::Default});
+                        tok.append(format!("({});", val));
+                    }
+                    _ => {
+                        panic!("default must be a string that will be parsed!");
+                    }
+                }
+            },
+            None =>  { },
+        }
+
     }
 
     tok.append("loop {");
     tok.append(quote!{
         if provider.peek_char() == Some('}') {
-            provider.consume(1).unwrap();
+            provider.consume(1, fun)?;
             break;
         }
 
@@ -79,12 +129,12 @@ fn impl_parse_named<'a, I>(fields: I, tok: &mut quote::Tokens)
         tok.append(quote!{nxt.starts_with(stringify!(#name))});
         tok.append("{");
         tok.append(quote!{
-            provider.consume(stringify!(#name).len()).unwrap();
+            provider.consume(stringify!(#name).len(), fun)?;
             provider.consume_char(':', fun)?;
-            #name.push_found(#ty::parse_from(provider, fun), fun)?;
+            #name.push_found(<#ty as ConfigAble>::parse_from(provider, fun), provider, fun)?;
 
             if provider.peek_char() == Some(',') {
-                provider.consume(1).unwrap();
+                provider.consume(1, fun)?;
             }
         });
         tok.append("}");
@@ -105,7 +155,7 @@ fn impl_parse_ordered<'a, I>(fields: I, tok: &mut quote::Tokens)
 
         tok.append(format!("let var{} =", index));
         
-        tok.append(quote!{ #ty::parse_from(provider, fun)?; });
+        tok.append(quote!{<#ty as ConfigAble>::parse_from(provider, fun)?; });
     }
     tok.append(quote!{provider.consume_char(')', fun)?;});
 }
@@ -114,11 +164,18 @@ fn impl_get_format(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
     let name = &ast.ident;
     let mut others = HashSet::new();
 
-    tok.append("#[allow(unused_variables)]"); /* Allow unused set argument */
-    tok.append("fn get_format(set: &mut ::std::collections::HashSet<String>) -> String {");
-    tok.append("let mut ret = String::new();");
+    tok.append(quote!{
+        #[allow(unused_variables)] /* We need this, since we may not use the set */
+        fn get_format<F>(set: &mut ::std::collections::HashSet<String>, fun: &mut F)
+            where F: FnMut(&str)
+    });
+    tok.append("{");
 
-    tok.append(format!("ret.push_str(\"{}: \");", name));
+    tok.append(quote!{
+        fun(stringify!(#name));
+        fun(": ");
+    });
+    //tok.append(format!("fun(\"{}: \");", name));
 
     match ast.body {
         /* Handle Enums */
@@ -129,22 +186,22 @@ fn impl_get_format(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
                 if first {
                     first = false
                 } else {
-                    tok.append(quote!{ret.push_str(" | ");});
+                    tok.append(quote!{fun(" | ");});
                 }
 
-                tok.append(quote!{ret.push_str(stringify!(#vname));});
+                tok.append(quote!{fun(stringify!(#vname));});
 
                 match var.data {
                     syn::VariantData::Unit => {},
                     syn::VariantData::Tuple(ref fields) => {
-                        tok.append(quote!{ret.push_str("(");});
+                        tok.append(quote!{fun("(");});
                         append_fields(fields.iter(), tok, &mut others);
-                        tok.append(quote!{ret.push_str(")");});
+                        tok.append(quote!{fun(")");});
                     },
                     syn::VariantData::Struct(ref fields) => {
-                        tok.append(quote!{ret.push_str("{");});
+                        tok.append(quote!{fun("{");});
                         append_fields(fields.iter(), tok, &mut others);
-                        tok.append(quote!{ret.push_str("}");});
+                        tok.append(quote!{fun("}");});
                     },
                 }
 
@@ -158,43 +215,97 @@ fn impl_get_format(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
                     panic!("Error while creating config scheme for {}. Can't do anything nice with Unit structs", name);
                 },
                 &syn::VariantData::Tuple(ref fields) => {
-                    tok.append(quote!{ret.push_str("(");});
+                    tok.append(quote!{fun("(");});
                     append_fields(fields.iter(), tok, &mut others);
-                    tok.append(quote!{ret.push_str(")");});
+                    tok.append(quote!{fun(")");});
                 },
                 &syn::VariantData::Struct(ref fields) => {
-                    tok.append(quote!{ret.push_str("{");});
+                    tok.append(quote!{fun("{");});
                     append_fields(fields.iter(), tok, &mut others);
-                    tok.append(quote!{ret.push_str("}");});
+                    tok.append(quote!{fun("}");});
                 },
             }
         }
     }
-
-    tok.append("ret.push_str(\"\\n\");");
 
     /* Append other types format, so the entire used type tree will be displayed */
     for other in others {
         tok.append(quote!{
             { /* This will be a block, to avoid naming collisions */
                 /* Check if we already appended the other type somewhere*/
-                let name = String::from(#other::get_name());
+                let name = stringify!(#other).to_string();
                 if !set.contains(&name) {
                     /* If we didn't, insert it into the list of printed types and append it */
                     set.insert(name);
 
-                    ret.push_str(#other::get_format(set).as_str());
+                    fun("\n");
+                    <#other as ConfigAble>::get_format(set, fun);
                 }
             } /* Close the scoping block */
         });
     }
 
-    tok.append("return ret; } "); /* Close print_format */
+    tok.append("}"); /* Close print_format */
+}
+
+fn impl_get_default(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
+    let name = &ast.ident;
+    tok.append(quote!{fn get_default() -> Result<Self, ()>});
+    tok.append("{"); /* Open get_default() function */
+
+    match ast.body {
+        syn::Body::Enum(_) => { tok.append(quote!{ return Err(()); }); },
+        syn::Body::Struct(ref data) => {
+            match data {
+                &syn::VariantData::Unit => {
+                },
+                &syn::VariantData::Tuple(ref fields) => {
+                    tok.append("return Ok(");
+                    tok.append(quote!{#name});
+                    tok.append("(");
+
+                    for (i, ref field) in fields.iter().enumerate() {
+                        if i > 0 {
+                            tok.append(",");
+                        }
+                        let ty = &field.ty;
+
+                        tok.append(quote!{<#ty as ConfigAble>::get_default()?});
+                    }
+
+                    tok.append("));");
+                },
+                &syn::VariantData::Struct(ref fields) => {
+                    tok.append("return Ok(");
+                    tok.append(quote!{#name});
+                    tok.append("{");
+
+                    for (i, ref field) in fields.iter().enumerate() {
+                        if i > 0 {
+                            tok.append(",");
+                        }
+                        let ty = &field.ty;
+
+                        let name = match field.ident {
+                            Some(ref x) => x,
+                            None => panic!("Encountered unnamed field while trying to derive named field parsing")
+                        };
+
+                        tok.append(quote!{ #name: <#ty as ConfigAble>::get_default()?});
+                    }
+
+                    tok.append("});");
+                },
+            }
+        },
+    }
+
+    tok.append("}"); /* close get_default() function */
 }
 
 fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
     let name = &ast.ident;
-    tok.append(quote!{#[allow(unused_variables, unreachable_code)]
+    tok.append(quote!{#[allow(unused_variables, unreachable_code, unused_assignments)]
         fn parse_from<I, F>(provider: &mut ConfigProvider<I>, fun: &mut F) -> Result<Self, ParseError>
             where I: ::std::iter::Iterator<Item=(usize, String)>,
                   F: FnMut(String)
@@ -219,7 +330,7 @@ fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
                     syn::VariantData::Unit => {
                         tok.append(quote!{
                             if nxt.starts_with(stringify!(#vname)) {
-                                provider.consume(stringify!(#vname).len()).unwrap();
+                                provider.consume(stringify!(#vname).len(), fun)?;
                                 return Ok(#name::#vname);
                             }
                         });
@@ -227,7 +338,7 @@ fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
                     syn::VariantData::Tuple(ref fields) => {
                         tok.append(quote!{ if nxt.starts_with(stringify!(#vname))});
                         tok.append("{");
-                        tok.append(quote!{ provider.consume(stringify!(#vname).len()).unwrap();});
+                        tok.append(quote!{ provider.consume(stringify!(#vname).len(), fun)?;});
                         impl_parse_ordered(fields.iter(), tok);
                         tok.append("return Ok(");
                         tok.append(quote!{#name::#vname});
@@ -246,7 +357,7 @@ fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
                     syn::VariantData::Struct(ref fields) => {
                         tok.append(quote!{ if nxt.starts_with(stringify!(#vname))});
                         tok.append("{");
-                        tok.append(quote!{ provider.consume(stringify!(#vname).len()).unwrap();});
+                        tok.append(quote!{ provider.consume(stringify!(#vname).len(), fun)?;});
                         impl_parse_named(fields.iter(), tok);
 
                         impl_parse_named(fields.iter(), tok);
@@ -338,13 +449,14 @@ fn impl_derive_config_able(ast: &syn::MacroInput) -> quote::Tokens {
     impl_get_format(ast, &mut start);
     impl_get_name(ast, &mut start);
     impl_parse_from(ast, &mut start);
+    impl_get_default(ast, &mut start);
 
     start.append("}"); /* Close impl */
 
     return start;
 }
 
-#[proc_macro_derive(ConfigAble)]
+#[proc_macro_derive(ConfigAble, attributes(ConfigAttrs))]
 pub fn print_format(input: TokenStream) -> TokenStream {
     let s = input.to_string();
 
