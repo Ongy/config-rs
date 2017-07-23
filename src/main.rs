@@ -307,6 +307,18 @@ fn main() {
     println!("{}", Config::get_format_str());
 
     println!("{:?}", Config::parse_from(&mut ConfigProvider::new_from_str("{spawn: Some(\"monky\")}"), &mut |x| println!("{}", x)));
+
+    let lines = vec![
+        (1, "{".to_string()),
+        (2, "spawn: Some(\"monky\")".to_string()),
+        (3, ", title: \"ongybar\"".to_string()),
+        (3, ", spawn: Some(\"monky\")".to_string()),
+        (4, "# a Comment".to_string()),
+        (5, "}".to_string())
+    ];
+
+    let mut provider = ConfigProvider::new_with_provider(lines.into_iter(), "Testfile".to_string());
+    println!("{:?}", Config::parse_from(&mut provider, &mut |x| println!("{}", x)));
 }
 
 #[derive(Debug)]
