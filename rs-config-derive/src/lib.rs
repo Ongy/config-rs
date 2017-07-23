@@ -125,22 +125,29 @@ fn impl_parse_named<'a, I>(fields: I, tok: &mut quote::Tokens)
         };
         let ty = &field.ty;
 
-        tok.append("if ");
-        tok.append(quote!{nxt.starts_with(stringify!(#name))});
-        tok.append("{");
         tok.append(quote!{
-            provider.consume(stringify!(#name).len(), fun)?;
-            provider.consume_char(':', fun)?;
-            #name.push_found(<#ty as ConfigAble>::parse_from(provider, fun), provider, fun)?;
+            if nxt.starts_with(stringify!(#name)) {
+                provider.consume(stringify!(#name).len(), fun)?;
+                provider.consume_char(':', fun)?;
+                #name.push_found(<#ty as ConfigAble>::parse_from(provider, fun), provider, fun)?;
 
-            if provider.peek_char() == Some(',') {
-                provider.consume(1, fun)?;
+                if provider.peek_char() == Some(',') {
+                    provider.consume(1, fun)?;
+                }
+                continue;
             }
         });
-        tok.append("}");
     }
 
+    tok.append(quote!{
+        provider.print_error(0, fun);
+        fun(format!("Found invalid field name !{}!", nxt));
+        return Err(ParseError::Final);
+    });
+
     tok.append("}");
+
+
 }
 
 fn impl_parse_ordered<'a, I>(fields: I, tok: &mut quote::Tokens)
@@ -303,6 +310,162 @@ fn impl_get_default(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
     tok.append("}"); /* close get_default() function */
 }
 
+fn impl_merge(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
+    let name = &ast.ident;
+    tok.append(quote!{
+        #[allow(unused_variables, unreachable_code, unreachable_patterns)]
+        fn merge(&mut self, rhs: Self) -> Result<(), ()>
+    });
+    tok.append("{"); /* open merge function */
+    match ast.body {
+        /* Handle Enums */
+        syn::Body::Enum(ref vars) => {
+            tok.append("match self {"); /* Open self matching */
+            for ref var in vars {
+                let vname = &var.ident;
+                match var.data {
+                    syn::VariantData::Unit => {
+                        tok.append(quote!{
+                            &mut #name::#vname => {
+                                match rhs {
+                                    #name::#vname => {
+                                        return Ok(());
+                                    },
+                                    _ => {
+                                        return Err(());
+                                    },
+                                }
+                            },
+                        });
+                    },
+                    // TODO: Implement tuple merging
+                    syn::VariantData::Tuple(ref fields) => {
+                        let mut partial = quote::Tokens::new();
+                        let mut lhs_fields = quote::Tokens::new();
+                        let mut rhs_fields = quote::Tokens::new();
+                        let mut merger = quote::Tokens::new();
+
+                        lhs_fields.append("(");
+                        rhs_fields.append("(");
+
+                        for (i, _) in fields.iter().enumerate() {
+
+                            let name = format!("var{}", i);
+
+                            if i > 0 {
+                                lhs_fields.append(",");
+                                rhs_fields.append(",");
+                            }
+
+                            lhs_fields.append(format!("ref mut l_{}", name));
+                            rhs_fields.append(format!("r_{}", name));
+                            merger.append(format!("l_{}.merge(r_{})?;", name, name));
+                        }
+
+                        lhs_fields.append(")");
+                        rhs_fields.append(")");
+
+                        partial.append(quote!{&mut #name::#vname});
+                        partial.append(lhs_fields);
+                        partial.append(" => {"); /* Open lhs match */
+                        partial.append("match rhs {");
+
+                        partial.append(quote!{#name::#vname});
+                        partial.append(rhs_fields);
+                        partial.append("=> {"); /* Open rhs match */
+
+                        partial.append(merger);
+                        partial.append("return Ok(());");
+
+                        partial.append("},"); /* Close rhs match */
+                        partial.append("_ => {return Err(());},}"); /* Close rhs matching */
+                        partial.append("},"); /* close lhs match */
+
+                        tok.append(partial);
+                    },
+                    syn::VariantData::Struct(ref fields) => {
+                        let mut lhs_fields = quote::Tokens::new();
+                        let mut rhs_fields = quote::Tokens::new();
+                        let mut merger = quote::Tokens::new();
+
+                        lhs_fields.append("{");
+                        rhs_fields.append("{");
+
+                        for (i, ref field) in fields.iter().enumerate() {
+
+                            let name = match field.ident {
+                                Some(ref x) => x,
+                                None => panic!("Encountered unnamed field while trying to derive named field parsing")
+                            };
+
+                            if i > 0 {
+                                lhs_fields.append(",");
+                                rhs_fields.append(",");
+                            }
+
+                            lhs_fields.append(format!("{}: ref mut l_{}", name, name));
+                            rhs_fields.append(format!("{}: r_{}", name, name));
+                            merger.append(format!("l_{}.merge(r_{})?;", name, name));
+                        }
+
+                        lhs_fields.append("}");
+                        rhs_fields.append("}");
+
+                        tok.append(quote!{&mut #name::#vname});
+                        tok.append(lhs_fields);
+                        tok.append(" => {"); /* Open lhs match */
+                        tok.append("match rhs {");
+
+                        tok.append(quote!{#name::#vname});
+                        tok.append(rhs_fields);
+                        tok.append("=> {"); /* Open rhs match */
+
+                        tok.append(merger);
+                        tok.append("return Ok(());");
+
+                        tok.append("},"); /* Close rhs match */
+                        tok.append("_ => {return Err(());},}"); /* Close rhs matching */
+                        tok.append("},"); /* close lhs match */
+                    },
+                }
+                /* We don't do Tuple merging (yet), so we ignore everything */
+            }
+            tok.append("}");/* Close self matching */
+        },
+        /* Handle structs */
+        syn::Body::Struct(ref data) => {
+
+            match data {
+                &syn::VariantData::Unit => {
+                },
+                &syn::VariantData::Tuple(ref fields) => {
+                    for (i, _) in fields.iter().enumerate() {
+                        tok.append(format!("self.{}.merge(rhs.{})?;", i, i));
+                    }
+                    tok.append(quote!{return Ok(());});
+                },
+                &syn::VariantData::Struct(ref fields) => {
+                    /* Since a merge error is considered an error, it doesn't matter that this
+                     * is impure and sets a few values, even when it fails
+                     */
+                    for ref field in fields.iter() {
+                        let name = match field.ident {
+                            Some(ref x) => x,
+                            None => panic!("Encountered unnamed field while trying to derive named field parsing")
+                        };
+
+                        tok.append(quote!{ self.#name.merge(rhs.#name)?; });
+                    }
+                    tok.append(quote!{return Ok(());});
+                },
+            }
+        }
+    }
+
+    tok.append("return Err(());");
+    tok.append("}"); /* close merge function */
+}
+
 fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
     let name = &ast.ident;
     tok.append(quote!{#[allow(unused_variables, unreachable_code, unused_assignments)]
@@ -461,9 +624,11 @@ fn impl_derive_config_able(ast: &syn::MacroInput) -> quote::Tokens {
     impl_get_name(ast, &mut start);
     impl_parse_from(ast, &mut start);
     impl_get_default(ast, &mut start);
+    impl_merge(ast, &mut start);
 
     start.append("}"); /* Close impl */
 
+//    println!("{:?}", start); /* debug output of entire derived trait */
     return start;
 }
 

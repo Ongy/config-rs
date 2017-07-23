@@ -37,30 +37,37 @@ impl<T> ParseTmp<T> {
     fn set_default(&mut self, val: T) {
         self.value = ParseTmpI::Default(val);
     }
+}
 
-    fn push_found<I, F>(&mut self, rst: Result<T, ParseError>, provider: &ConfigProvider<I>, fun: &mut F) -> Result<(), ParseError>
+impl<T> ParseTmp<T>
+    where T: ConfigAble {
+    fn push_found<I, F>(&mut self, rhs: Result<T, ParseError>, provider: &ConfigProvider<I>, fun: &mut F) -> Result<(), ParseError>
         where F: FnMut(String) {
-        match rst {
+        match rhs {
             Ok(val) => {
-                match &self.value {
-                    &ParseTmpI::Empty => {
-                        self.value = ParseTmpI::Found(val);
+                /* ARGH! Borrow checker be smarter ! */
+                self.value = match &mut self.value {
+                    &mut ParseTmpI::Empty => {
+                        ParseTmpI::Found(val)
+                    },
+                    &mut ParseTmpI::Failed => {
                         return Ok(());
                     },
-                    &ParseTmpI::Failed => {
-                        return Ok(());
+                    &mut ParseTmpI::Found(ref mut x) => {
+                        match x.merge(val) {
+                            Err(()) => {
+                                provider.print_error(0, fun);
+                                fun(format!("Couldn't merge {}.", self.name));
+                                ParseTmpI::Failed
+                            },
+                            _ => { return Ok(()); },
+                        }
                     },
-                    &ParseTmpI::Found(_) => {
-                        provider.print_error(0, fun);
-                        fun(format!("Tried to parse {} twice. This is not supported(yet)", self.name));
-                        self.value = ParseTmpI::Failed;
-                        return Ok(());
+                    &mut ParseTmpI::Default(_) => {
+                        ParseTmpI::Found(val)
                     },
-                    &ParseTmpI::Default(_) => {
-                        self.value = ParseTmpI::Found(val);
-                        return Ok(());
-                    },
-                }
+                };
+                return Ok(());
             },
             Err(ParseError::Recoverable) => {
                 fun(format!("Tried to push Recoverable error for {}. Will continue", self.name));
@@ -72,10 +79,7 @@ impl<T> ParseTmp<T> {
             },
         }
     }
-}
 
-impl<T> ParseTmp<T>
-    where T: ConfigAble {
     fn get_value<F>(self, fun: &mut F) -> Result<T, ParseError>
         where F: FnMut(String) {
         match self.value {
@@ -128,6 +132,9 @@ pub trait ConfigAble
     /* Get a default value For the type */
     // TODO: Should the error type be something more serious?
     fn get_default() -> Result<Self, ()>;
+
+    /* Try to merge 2 sets of values found */
+    fn merge(&mut self, rhs: Self) -> Result<(), ()>;
 }
 
 impl ConfigAble for String {
@@ -161,6 +168,11 @@ impl ConfigAble for String {
     }
 
     fn get_default() -> Result<Self, ()> { Err(()) }
+
+    fn merge(&mut self, rhs: Self) -> Result<(), ()> { 
+        self.push_str(rhs.as_str());
+        return Ok(());
+    }
 }
 
 impl ConfigAble for char {
@@ -193,6 +205,44 @@ impl ConfigAble for char {
     }
 
     fn get_default() -> Result<Self, ()> { Err(()) }
+
+    fn merge(&mut self, rhs: Self) -> Result<(), ()> { if *self == rhs { Ok(()) } else { Err(()) } }
+}
+
+impl ConfigAble for i32 {
+    fn get_format<F>(_: &mut HashSet<String>, fun: &mut F) 
+        where F: FnMut(&str) {
+            fun("i32: Digits");
+        }
+
+    fn get_name() -> &'static str { "i32" }
+
+    fn parse_from<I, F>(provider: &mut ConfigProvider<I>, fun: &mut F) -> Result<Self, ParseError>
+        where I: std::iter::Iterator<Item=(usize, String)>,
+              F: FnMut(String) {
+
+        if let Some(content) = provider.get_next() {
+            let max = content.find(|c: char| c.is_whitespace()).unwrap_or(content.len());
+            let tmp = &content[0 .. max];
+            match tmp.parse::<i32>() {
+                Ok(ret) => {
+                    provider.consume(max, fun)?;
+                    return Ok(ret);
+                },
+                Err(x) => {
+                    fun(format!("Failed to parse '{}' into an i32: {}", tmp, x));
+                    return Err(ParseError::Recoverable);
+                }
+            }
+        }
+
+        fun("At end of file :(".to_string());
+        return Err(ParseError::Final);
+    }
+
+    fn get_default() -> Result<Self, ()> { Err(()) }
+
+    fn merge(&mut self, rhs: Self) -> Result<(), ()> { if *self == rhs { Ok(()) } else { Err(()) } }
 }
 
 impl<T> ConfigAble for Option<T>
@@ -243,6 +293,21 @@ impl<T> ConfigAble for Option<T>
         match <T as ConfigAble>::get_default() {
             Ok(x) => Ok(Some(x)),
             _ => Ok(None),
+        }
+    }
+
+    fn merge(&mut self, rhs: Self) -> Result<(), ()> {
+        match self {
+            &mut None => {
+                *self = rhs;
+                return Ok(());
+            },
+            &mut Some(ref mut lhs) => {
+                match rhs {
+                    Some(x) => lhs.merge(x),
+                    None => Ok(()),
+                }
+            },
         }
     }
 }
@@ -299,6 +364,11 @@ impl<T> ConfigAble for Vec<T>
     }
 
     fn get_default() -> Result<Self, ()> { Ok(Self::new()) }
+
+    fn merge(&mut self, rhs: Self) -> Result<(), ()> {
+        self.extend(rhs.into_iter());
+        return Ok(());
+    }
 }
 
 #[derive(Debug, ConfigAble)]
@@ -316,25 +386,45 @@ enum Position {
 }
 
 #[derive(Debug, ConfigAble)]
+enum InputSource {
+    Stdin,
+    Pipe(i32),
+    Named(String),
+    Spawn(String),
+}
+
+#[derive(Debug, ConfigAble)]
+struct Input {
+    source: InputSource,
+    #[ConfigAttrs(default = "0")]
+    layer: i32,
+}
+
+#[derive(Debug, ConfigAble)]
 struct Config {
     #[ConfigAttrs(default = "Position::Global(Direction::Top)")]
     position: Position,
-    spawn: Option<String>,
+    inputs: Vec<Input>,
     #[ConfigAttrs(default = "\"ongybar\".to_string()")]
     title: String,
+}
+
+#[derive(Debug, ConfigAble)]
+enum TestEnum {
+    TestCon{s: String, c: char},
 }
 
 #[cfg(not(test))]
 fn main() {
     println!("{}", Config::get_format_str());
 
-    println!("{:?}", Config::parse_from(&mut ConfigProvider::new_from_str("{spawn: Some(\"monky\")}"), &mut |x| println!("{}", x)));
+    println!("{:?}", Config::parse_from(&mut ConfigProvider::new_from_str("{}"), &mut |x| println!("{}", x)));
 
     let lines = vec![
         (1, "{".to_string()),
-        (2, "spawn: Some(\"monky\")".to_string()),
+        (2, "  inputs: [{source: Spawn(\"monk\"), source: Spawn(\"y\")}]".to_string()),
         (3, ", title: \"ongybar\"".to_string()),
-        (3, ", spawn: Some(\"monky\")".to_string()),
+        (3, ", inputs: [{source: Stdin, source: Stdin}]".to_string()),
         (4, "# a Comment".to_string()),
         (5, "}".to_string())
     ];
@@ -657,10 +747,12 @@ mod test {
         c: char,
     }
 
+    #[test]
     fn test_struct_struct_format() {
         assert!(StructStruct::get_format_str().starts_with("StructStruct: {s: String, c: char}"));
     }
 
+    #[test]
     fn test_struct_struct_parse() {
         let mut builder = String::new();
         let mut fun = |x: String| builder.push_str(x.as_str());
@@ -669,6 +761,13 @@ mod test {
         assert!(provider.get_next() == None);
     }
 
+    #[test]
+    fn test_struct_struct_parse_fail() {
+        let mut builder = String::new();
+        let mut fun = |x: String| builder.push_str(x.as_str());
+        let mut provider = ConfigProvider::new_from_line("{ k: 'C', s: \"TestStr\" }".to_string());
+        assert!(StructStruct::parse_from(&mut provider, &mut fun) == Err(ParseError::Final));
+    }
 
     #[test]
     fn test_config_provider_string() {
