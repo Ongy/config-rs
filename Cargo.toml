@@ -1,5 +1,5 @@
 [package]
-name = "rs-confg"
+name = "rs-config"
 version = "0.1.0"
 authors = ["Markus Ongyerth <ongy@ongy.net>"]
 
