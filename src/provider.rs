@@ -1,19 +1,19 @@
 use std;
 use ParseError;
 
-#[derive(Debug)]
+//#[derive(Debug)]
 /// The main struct that will provide the config lines.
 ///
 /// This skips whitespaces and comment lines (starting with '#')
-pub struct ConfigProvider<I> {
+pub struct ConfigProvider {
     file: String,
     line: usize,
     column: usize,
     line_str: String,
-    line_it: I,
+    line_it: Box<std::iter::Iterator<Item=(usize, String)>>,
 }
 
-impl<I> ConfigProvider<I> {
+impl ConfigProvider {
     /// Get the next string. This will be from the current offset to the end of line.
     /// This does not do any token sanitize! Handle with starts_with over equality comparison.
     pub fn get_next(&self) -> Option<String> {
@@ -47,22 +47,16 @@ impl<I> ConfigProvider<I> {
     pub fn is_at_end(&self) -> bool {
         return self.column == self.line_str.len();
     }
-}
 
-impl<I> ConfigProvider<I> {
     /// Get a ConfigProvider from a single line. Probably only useful for testing.
-    pub fn new_from_line(line: String) -> ConfigProvider<std::option::IntoIter<(usize, String)>> {
+    pub fn new_from_line(line: String) -> ConfigProvider {
         return ConfigProvider::new_with_provider(Some((0, line)).into_iter(), "memory".to_string());
     }
 
     /// Get a ConfigProvider from a single str-literal. Probably only useful for testing.
-    pub fn new_from_str(line: &str) -> ConfigProvider<std::option::IntoIter<(usize, String)>> {
+    pub fn new_from_str(line: &str) -> ConfigProvider {
         return Self::new_from_line(line.to_string());
     }
-}
-
-impl<I> ConfigProvider<I>
-    where I: std::iter::Iterator<Item=(usize, String)> {
 
     /// Skip the current line. E.g. when a comment, or only whitespace left
     fn skip_current(&mut self) { 
@@ -106,11 +100,12 @@ impl<I> ConfigProvider<I>
     /// * `it`: The line iterator
     /// * `file`: The file name (should be a global path)
     // TODO: Enforce the path!
-    pub fn new_with_provider(it: I, file: String) -> Self {
+    pub fn new_with_provider<J>(it: J, file: String) -> Self
+        where J: std::iter::Iterator<Item=(usize, String)> + 'static {
         let mut ret = ConfigProvider { file: file,
             line: 1, column: 0,
             line_str: String::from(""),
-            line_it: it
+            line_it: Box::new(it)
         };
         ret.get_next_line();
 
@@ -167,7 +162,7 @@ mod test {
 
     #[test]
     fn test_config_provider_string() {
-        let mut provider = ConfigProvider::<String>::new_from_line("This is a line".to_string());
+        let mut provider = ConfigProvider::new_from_line("This is a line".to_string());
 
         assert!(provider.get_next() == Some("This is a line".to_string()));
 

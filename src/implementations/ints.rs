@@ -11,9 +11,8 @@ impl ConfigAble for i32 {
 
     fn get_name() -> &'static str { "i32" }
 
-    fn parse_from<I, F>(provider: &mut ConfigProvider<I>, fun: &mut F) -> Result<Self, ParseError>
-        where I: std::iter::Iterator<Item=(usize, String)>,
-              F: FnMut(String) {
+    fn parse_from<F>(provider: &mut ConfigProvider, fun: &mut F) -> Result<Self, ParseError>
+        where F: FnMut(String) {
 
         if let Some(content) = provider.get_next() {
             let max = content.find(|c: char| c.is_whitespace()).unwrap_or(content.len());

@@ -23,9 +23,8 @@ impl<T> ConfigAble for Option<T>
         concat!("Option<", /*T::get_name(),*/ ">")
     }
 
-    fn parse_from<I, F>(provider: &mut ConfigProvider<I>, fun: &mut F) -> Result<Self, ParseError>
-        where I: std::iter::Iterator<Item=(usize, String)>,
-              F: FnMut(String) {
+    fn parse_from<F>(provider: &mut ConfigProvider, fun: &mut F) -> Result<Self, ParseError>
+        where F: FnMut(String) {
 
         if let Some(content) = provider.get_next() {
             if content.starts_with("None") {
@@ -84,11 +83,11 @@ mod test {
     fn test_option_parse() {
         let mut builder = String::new();
         let mut fun = |x: String| builder.push_str(x.as_str());
-        let mut provider = ConfigProvider::<String>::new_from_line("Some(\"TestStr\")".to_string());
+        let mut provider = ConfigProvider::new_from_line("Some(\"TestStr\")".to_string());
         assert!(<Option<String> as ConfigAble>::parse_from(&mut provider, &mut fun) == Ok(Some("TestStr".to_string())));
         assert!(provider.get_next() == None);
 
-        let mut provider2 = ConfigProvider::<String>::new_from_line("None".to_string());
+        let mut provider2 = ConfigProvider::new_from_line("None".to_string());
         assert!(<Option<String> as ConfigAble>::parse_from(&mut provider2, &mut fun) == Ok(None));
         assert!(provider2.get_next() == None);
     }

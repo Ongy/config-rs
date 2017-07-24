@@ -13,9 +13,8 @@ impl ConfigAble for char {
 
     fn get_name() -> &'static str { "char" }
 
-    fn parse_from<I, F>(provider: &mut ConfigProvider<I>, fun: &mut F) -> Result<char, ParseError>
-        where I: std::iter::Iterator<Item=(usize, String)>,
-              F: FnMut(String) {
+    fn parse_from<F>(provider: &mut ConfigProvider, fun: &mut F) -> Result<char, ParseError>
+        where F: FnMut(String) {
 
         if let Some(content) = provider.get_next() {
             match parse_char(content.as_str()) {

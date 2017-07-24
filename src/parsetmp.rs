@@ -48,7 +48,7 @@ impl<T> ParseTmp<T>
     /// * `rhs`: The value found while parsing
     /// * `provider`: The ConfigProvider currently in use. This is required for error reporting
     /// * `fun`: The error reporting function. Most likely either printing, or appending to string.
-    pub fn push_found<I, F>(&mut self, rhs: Result<T, ParseError>, provider: &ConfigProvider<I>, fun: &mut F) -> Result<(), ParseError>
+    pub fn push_found<F>(&mut self, rhs: Result<T, ParseError>, provider: &ConfigProvider, fun: &mut F) -> Result<(), ParseError>
         where F: FnMut(String) {
         match rhs {
             Ok(val) => {

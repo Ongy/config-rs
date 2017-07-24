@@ -7,8 +7,14 @@ mod parsetmp;
 mod implementations;
 
 use std::collections::HashSet;
+
 pub use provider::ConfigProvider;
 pub use parsetmp::ParseTmp;
+
+use std::io::Write;
+use std::fs::File;
+use std::io::BufRead;
+use std::io::BufReader;
 
 #[derive(Debug, PartialEq, Eq)]
 /// The error type used by config-rs.
@@ -55,9 +61,8 @@ pub trait ConfigAble
     /// # Arguments
     /// * `provider`: The ConfigProvider providing the config lines
     /// * `fun`: The error reporting function
-    fn parse_from<I, F>(provider: &mut ConfigProvider<I>, fun: &mut F) -> Result<Self, ParseError>
-        where I: std::iter::Iterator<Item=(usize, String)>,
-              F: FnMut(String);
+    fn parse_from<F>(provider: &mut ConfigProvider, fun: &mut F) -> Result<Self, ParseError>
+       where  F: FnMut(String);
 
     // TODO: Should the error type be something more serious?
     /// Get a default value for this type
@@ -66,6 +71,36 @@ pub trait ConfigAble
     /// Try to merge an object of this type with another (in case multiple are specified in the
     /// config)
     fn merge(&mut self, rhs: Self) -> Result<(), ()>;
+}
+
+pub fn provider_from_file(path: &str) -> ConfigProvider {
+    let f = File::open(path).unwrap();
+
+    let open = std::iter::once((0, "{".into()));
+    let lines = BufReader::new(f).lines().map(|x| x.unwrap()).enumerate();
+    let close = std::iter::once((usize::max_value(), "}".into()));
+
+    let fin = open.chain(lines).chain(close);
+
+    return ConfigProvider::new_with_provider(fin, path.into());
+}
+
+pub fn read_or_exit<T>(path: &str) -> T
+    where T: ConfigAble {
+    let mut provider = provider_from_file(path);
+
+    let ret = T::parse_from(&mut provider, &mut |x| writeln!(&mut std::io::stderr(), "{}", x).unwrap());
+
+    match ret {
+        Ok(x) => {return x;},
+        Err(_) => {
+            writeln!(&mut std::io::stderr(), "Failed to parse {}", T::get_name()).unwrap();
+            let mut set = std::collections::HashSet::new();
+            T::get_format(&mut set, &mut |x| writeln!(&mut std::io::stderr(), "{}", x).unwrap());
+
+            std::process::exit(-1);
+        }
+    }
 }
 
 #[cfg(test)]

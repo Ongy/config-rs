@@ -23,9 +23,8 @@ impl<T> ConfigAble for Vec<T>
         concat!("Vec<", /*T::get_name(),*/ ">")
     }
 
-    fn parse_from<I, F>(provider: &mut ConfigProvider<I>, fun: &mut F) -> Result<Self, ParseError>
-        where I: std::iter::Iterator<Item=(usize, String)>,
-              F: FnMut(String) {
+    fn parse_from<F>(provider: &mut ConfigProvider, fun: &mut F) -> Result<Self, ParseError>
+        where F: FnMut(String) {
 
         let mut first = true;
         let mut ret = Vec::new();
@@ -76,11 +75,11 @@ mod test {
     fn test_vec_parse() {
         let mut builder = String::new();
         let mut fun = |x: String| builder.push_str(x.as_str());
-        let mut provider = ConfigProvider::<String>::new_from_line("[]".to_string());
+        let mut provider = ConfigProvider::new_from_line("[]".to_string());
         assert!(<Vec<char> as ConfigAble>::parse_from(&mut provider, &mut fun) == Ok(vec![]));
         assert!(provider.get_next() == None);
 
-        let mut provider2 = ConfigProvider::<String>::new_from_line("[ '1', '2', '3' ]".to_string());
+        let mut provider2 = ConfigProvider::new_from_line("[ '1', '2', '3' ]".to_string());
         assert!(<Vec<char> as ConfigAble>::parse_from(&mut provider2, &mut fun) == Ok(vec!['1', '2', '3']));
         assert!(provider2.get_next() == None);
     }
