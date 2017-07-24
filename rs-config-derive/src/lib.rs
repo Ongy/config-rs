@@ -84,7 +84,7 @@ fn impl_parse_named<'a, I>(fields: I, tok: &mut quote::Tokens)
         };
         let ty = &field.ty;
 
-        tok.append(quote!{let mut #name:ParseTmp<#ty> = ParseTmp::new(stringify!(#name).into());});
+        tok.append(quote!{let mut #name:rs_config::ParseTmp<#ty> = rs_config::ParseTmp::new(stringify!(#name).into());});
         match get_attrs(field).and_then(|x| find_attr_lit("default", x)) {
             Some(x) => {
                 match x {
@@ -113,7 +113,7 @@ fn impl_parse_named<'a, I>(fields: I, tok: &mut quote::Tokens)
             Some(x) => x,
             None => {
                 fun("Reached end of file while trying to parse named values".to_string());
-                return Err(ParseError::Final);
+                return Err(rs_config::ParseError::Final);
             }
         };
     });
@@ -142,7 +142,7 @@ fn impl_parse_named<'a, I>(fields: I, tok: &mut quote::Tokens)
     tok.append(quote!{
         provider.print_error(0, fun);
         fun(format!("Found invalid field name !{}!", nxt));
-        return Err(ParseError::Final);
+        return Err(rs_config::ParseError::Final);
     });
 
     tok.append("}");
@@ -467,7 +467,7 @@ fn impl_merge(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
 fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
     let name = &ast.ident;
     tok.append(quote!{#[allow(unused_variables, unreachable_code, unused_assignments)]
-        fn parse_from<I, F>(provider: &mut ConfigProvider<I>, fun: &mut F) -> Result<Self, ParseError>
+        fn parse_from<I, F>(provider: &mut rs_config::ConfigProvider<I>, fun: &mut F) -> Result<Self, rs_config::ParseError>
             where I: ::std::iter::Iterator<Item=(usize, String)>,
                   F: FnMut(String)
     });
@@ -476,7 +476,7 @@ fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
             Some(x) => x,
             None => {
                 fun("Was at end of file.".to_string());
-                return Err(ParseError::Final);
+                return Err(rs_config::ParseError::Final);
             }
         };
     });
@@ -604,7 +604,7 @@ fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
 
     tok.append(quote!{
         fun(format!("Tried to parse {}, found '{}' which I couldn't handle", stringify!(#name), nxt));
-        return Err(ParseError::Final);
+        return Err(rs_config::ParseError::Final);
     });
     tok.append("}");
 }
