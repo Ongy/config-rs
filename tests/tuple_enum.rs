@@ -16,27 +16,27 @@ enum TupleEnum {
 fn test_tuple_enum_parse() {
     let mut builder = String::new();
     let mut fun = |x: String| builder.push_str(x.as_str());
-    let mut provider = rs_config::ConfigProvider::<String>::new_from_line("TupleCon1 ( \"TestStr\")".to_string());
+    let mut provider = rs_config::ConfigProvider::new_from_line("TupleCon1 ( \"TestStr\")".to_string());
     assert!(TupleEnum::parse_from(&mut provider, &mut fun) == Ok(TupleEnum::TupleCon1("TestStr".to_string())));
     assert!(provider.get_next() == None);
 
-    let mut provider2 = rs_config::ConfigProvider::<String>::new_from_line("TupleCon2(\"TestStr\") asdf".to_string());
+    let mut provider2 = rs_config::ConfigProvider::new_from_line("TupleCon2(\"TestStr\") asdf".to_string());
     assert!(TupleEnum::parse_from(&mut provider2, &mut fun) == Ok(TupleEnum::TupleCon2("TestStr".to_string())));
     assert!(provider2.get_next() == Some("asdf".to_string()));
 
-    let mut provider3 = rs_config::ConfigProvider::<String>::new_from_line("TupleCon3(\"TestStr\")".to_string());
+    let mut provider3 = rs_config::ConfigProvider::new_from_line("TupleCon3(\"TestStr\")".to_string());
     match TupleEnum::parse_from(&mut provider3, &mut fun) {
         Ok(_) => assert!(false),
         Err(_) => assert!(true),
     }
 
-    let mut provider4 = rs_config::ConfigProvider::<String>::new_from_line("TupleCon2\"TestStr\")".to_string());
+    let mut provider4 = rs_config::ConfigProvider::new_from_line("TupleCon2\"TestStr\")".to_string());
     match TupleEnum::parse_from(&mut provider4, &mut fun) {
         Ok(_) => assert!(false),
         Err(_) => assert!(true),
     }
 
-    let mut provider5 = rs_config::ConfigProvider::<String>::new_from_line("TupleCon2(\"TestStr)".to_string());
+    let mut provider5 = rs_config::ConfigProvider::new_from_line("TupleCon2(\"TestStr)".to_string());
     match TupleEnum::parse_from(&mut provider5, &mut fun) {
         Ok(_) => assert!(false),
         Err(_) => assert!(true),

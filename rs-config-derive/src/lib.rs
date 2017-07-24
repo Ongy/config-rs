@@ -467,9 +467,8 @@ fn impl_merge(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
 fn impl_parse_from(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
     let name = &ast.ident;
     tok.append(quote!{#[allow(unused_variables, unreachable_code, unused_assignments)]
-        fn parse_from<I, F>(provider: &mut rs_config::ConfigProvider<I>, fun: &mut F) -> Result<Self, rs_config::ParseError>
-            where I: ::std::iter::Iterator<Item=(usize, String)>,
-                  F: FnMut(String)
+        fn parse_from<F>(provider: &mut rs_config::ConfigProvider, fun: &mut F) -> Result<Self, rs_config::ParseError>
+           where  F: FnMut(String)
     });
     tok.append("{");
     tok.append(quote!{let nxt = match provider.get_next() {

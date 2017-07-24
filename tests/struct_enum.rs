@@ -20,7 +20,7 @@ fn test_struct_enum_format() {
 fn test_struct_enum_parse() {
     let mut builder = String::new();
     let mut fun = |x: String| builder.push_str(x.as_str());
-    let mut provider = rs_config::ConfigProvider::<String>::new_from_line("Var2 { s: 'C', c: \"TestStr\" }".to_string());
+    let mut provider = rs_config::ConfigProvider::new_from_line("Var2 { s: 'C', c: \"TestStr\" }".to_string());
     assert!(StructEnum::parse_from(&mut provider, &mut fun) == Ok(StructEnum::Var2{c: "TestStr".to_string(), s:'C'}));
     assert!(provider.get_next() == None);
 }

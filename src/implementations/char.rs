@@ -47,7 +47,7 @@ mod test {
     fn test_char_parse() {
         let mut builder = String::new();
         let mut fun = |x: String| builder.push_str(x.as_str());
-        let mut provider = ConfigProvider::<String>::new_from_line("'\\\\'var".to_string());
+        let mut provider = ConfigProvider::new_from_line("'\\\\'var".to_string());
 
         let val = char::parse_from(&mut provider, &mut fun);
         assert!(val == Ok('\\'));

@@ -21,7 +21,7 @@ fn test_struct_struct_format() {
 fn test_struct_struct_parse() {
     let mut builder = String::new();
     let mut fun = |x: String| builder.push_str(x.as_str());
-    let mut provider = rs_config::ConfigProvider::<String>::new_from_line("{ c: 'C', s: \"TestStr\" }".to_string());
+    let mut provider = rs_config::ConfigProvider::new_from_line("{ c: 'C', s: \"TestStr\" }".to_string());
     assert!(StructStruct::parse_from(&mut provider, &mut fun) == Ok(StructStruct{s: "TestStr".to_string(), c:'C'}));
     assert!(provider.get_next() == None);
 }
@@ -30,6 +30,6 @@ fn test_struct_struct_parse() {
 fn test_struct_struct_parse_fail() {
     let mut builder = String::new();
     let mut fun = |x: String| builder.push_str(x.as_str());
-    let mut provider = rs_config::ConfigProvider::<String>::new_from_line("{ k: 'C', s: \"TestStr\" }".to_string());
+    let mut provider = rs_config::ConfigProvider::new_from_line("{ k: 'C', s: \"TestStr\" }".to_string());
     assert!(StructStruct::parse_from(&mut provider, &mut fun) == Err(rs_config::ParseError::Final));
 }
