@@ -49,14 +49,14 @@ impl<I> ConfigProvider<I> {
     }
 }
 
-impl ConfigProvider<std::option::IntoIter<(usize, String)>> {
+impl<I> ConfigProvider<I> {
     /// Get a ConfigProvider from a single line. Probably only useful for testing.
-    pub fn new_from_line(line: String) -> Self {
-        return Self::new_with_provider(Some((0, line)).into_iter(), "memory".to_string());
+    pub fn new_from_line(line: String) -> ConfigProvider<std::option::IntoIter<(usize, String)>> {
+        return ConfigProvider::new_with_provider(Some((0, line)).into_iter(), "memory".to_string());
     }
 
     /// Get a ConfigProvider from a single str-literal. Probably only useful for testing.
-    pub fn new_from_str(line: &str) -> Self {
+    pub fn new_from_str(line: &str) -> ConfigProvider<std::option::IntoIter<(usize, String)>> {
         return Self::new_from_line(line.to_string());
     }
 }
@@ -167,7 +167,7 @@ mod test {
 
     #[test]
     fn test_config_provider_string() {
-        let mut provider = ConfigProvider::new_from_line("This is a line".to_string());
+        let mut provider = ConfigProvider::<String>::new_from_line("This is a line".to_string());
 
         assert!(provider.get_next() == Some("This is a line".to_string()));
 
