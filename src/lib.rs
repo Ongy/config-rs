@@ -16,6 +16,8 @@ use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
 
+use std::path::Path;
+
 #[derive(Debug, PartialEq, Eq)]
 /// The error type used by config-rs.
 /// This will be returned by (sub) parses
@@ -73,8 +75,9 @@ pub trait ConfigAble
     fn merge(&mut self, rhs: Self) -> Result<(), ()>;
 }
 
-pub fn provider_from_file(path: &str) -> ConfigProvider {
-    let f = File::open(path).unwrap();
+pub fn provider_from_file<P: AsRef<Path>>(path: P) -> ConfigProvider {
+    let p = path.as_ref();
+    let f = File::open(p).unwrap();
 
     let open = std::iter::once((0, "{".into()));
     let lines = BufReader::new(f).lines().map(|x| x.unwrap()).enumerate();
@@ -82,10 +85,12 @@ pub fn provider_from_file(path: &str) -> ConfigProvider {
 
     let fin = open.chain(lines).chain(close);
 
-    return ConfigProvider::new_with_provider(fin, path.into());
+    let path_str = p.to_str().unwrap_or_else(|| "ERROR");
+
+    return ConfigProvider::new_with_provider(fin, path_str.into());
 }
 
-pub fn read_or_exit<T>(path: &str) -> T
+pub fn read_or_exit<T, P: AsRef<Path>>(path: P) -> T
     where T: ConfigAble {
     let mut provider = provider_from_file(path);
 
