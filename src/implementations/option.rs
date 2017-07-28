@@ -83,11 +83,11 @@ mod test {
     fn test_option_parse() {
         let mut builder = String::new();
         let mut fun = |x: String| builder.push_str(x.as_str());
-        let mut provider = ConfigProvider::new_from_line("Some(\"TestStr\")".to_string());
+        let mut provider = ConfigProvider::new_from_str("Some(\"TestStr\")");
         assert!(<Option<String> as ConfigAble>::parse_from(&mut provider, &mut fun) == Ok(Some("TestStr".to_string())));
         assert!(provider.get_next() == None);
 
-        let mut provider2 = ConfigProvider::new_from_line("None".to_string());
+        let mut provider2 = ConfigProvider::new_from_str("None");
         assert!(<Option<String> as ConfigAble>::parse_from(&mut provider2, &mut fun) == Ok(None));
         assert!(provider2.get_next() == None);
     }

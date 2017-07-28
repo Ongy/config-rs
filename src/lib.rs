@@ -9,13 +9,10 @@ mod implementations;
 use std::collections::HashSet;
 
 pub use provider::ConfigProvider;
+pub use provider::provider_from_file;
 pub use parsetmp::ParseTmp;
 
 use std::io::Write;
-use std::fs::File;
-use std::io::BufRead;
-use std::io::BufReader;
-
 use std::path::Path;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -29,6 +26,13 @@ pub enum ParseError {
     /// Something happened while parsing, that breaks the parser state.
     /// This happens when the config provided doesn't follow the required format.
     Final,
+}
+
+/// This is just a pseudo-instance to make error propagation nicer.
+/// Since Most errors that can occur somewhere ParseError isn't used are final, consider the "easy"
+/// conversion as final error.
+impl std::convert::From<String> for ParseError {
+    fn from(_: String) -> Self { ParseError::Final }
 }
 
 pub trait ConfigAble
@@ -75,24 +79,9 @@ pub trait ConfigAble
     fn merge(&mut self, rhs: Self) -> Result<(), ()>;
 }
 
-pub fn provider_from_file<P: AsRef<Path>>(path: P) -> ConfigProvider {
-    let p = path.as_ref();
-    let f = File::open(p).unwrap();
-
-    let open = std::iter::once((0, "{".into()));
-    let lines = BufReader::new(f).lines().map(|x| x.unwrap()).enumerate();
-    let close = std::iter::once((usize::max_value(), "}".into()));
-
-    let fin = open.chain(lines).chain(close);
-
-    let path_str = p.to_str().unwrap_or_else(|| "ERROR");
-
-    return ConfigProvider::new_with_provider(fin, path_str.into());
-}
-
 pub fn read_or_exit<T, P: AsRef<Path>>(path: P) -> T
     where T: ConfigAble {
-    let mut provider = provider_from_file(path);
+    let mut provider = provider::provider_from_file_wrap(path);
 
     let ret = T::parse_from(&mut provider, &mut |x| writeln!(&mut std::io::stderr(), "{}", x).unwrap());
 

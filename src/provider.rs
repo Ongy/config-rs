@@ -1,6 +1,11 @@
 use std;
 use ParseError;
 
+use std::fs::File;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::path::Path;
+
 //#[derive(Debug)]
 /// The main struct that will provide the config lines.
 ///
@@ -11,6 +16,7 @@ pub struct ConfigProvider {
     column: usize,
     line_str: String,
     line_it: Box<std::iter::Iterator<Item=(usize, String)>>,
+    child: Option<Box<ConfigProvider>>,
 }
 
 impl ConfigProvider {
@@ -21,6 +27,11 @@ impl ConfigProvider {
             return None;
         }
 
+        if let Some(ref child) = self.child {
+            return child.get_next();
+        }
+
+        /* TODO: Avoid the copy here */
         unsafe {
             let slice = self.line_str.slice_unchecked(self.column, self.line_str.len());
             return Some(String::from(slice));
@@ -40,6 +51,10 @@ impl ConfigProvider {
     /// * `fun`: The error reporting function
     pub fn print_error<F>(&self, index: usize, fun: &mut F)
         where F: FnMut(String) {
+        if let Some(ref child) = self.child {
+            child.print_error(index, fun);
+            fun("Included from: ".to_string());
+        }
         fun(format!("Encountered error in {}:{},{}", self.file, self.line, self.column + index + 1));
     }
 
@@ -48,24 +63,18 @@ impl ConfigProvider {
         return self.column == self.line_str.len();
     }
 
-    /// Get a ConfigProvider from a single line. Probably only useful for testing.
-    pub fn new_from_line(line: String) -> ConfigProvider {
-        return ConfigProvider::new_with_provider(Some((0, line)).into_iter(), "memory".to_string());
-    }
-
-    /// Get a ConfigProvider from a single str-literal. Probably only useful for testing.
-    pub fn new_from_str(line: &str) -> ConfigProvider {
-        return Self::new_from_line(line.to_string());
+    pub fn new_from_str<S: Into<String>>(line: S) -> ConfigProvider {
+        return ConfigProvider::new_with_provider(Some((0, line.into())).into_iter(), "memory".to_string());
     }
 
     /// Skip the current line. E.g. when a comment, or only whitespace left
-    fn skip_current(&mut self) { 
+    fn skip_current(&mut self) -> Result<(), String> {
         self.column = self.line_str.len();
-        self.get_next_line();
+        return self.get_next_line();
     }
 
     /// Skip the upcomming list of whitespaces. This will be called by every consume
-    fn skip_whitespace(&mut self) {
+    fn skip_whitespace(&mut self) -> Result<(), String> {
         unsafe {
             let pos = self.line_str.slice_unchecked(self.column, self.line_str.len()).find(|c: char| !c.is_whitespace());
 
@@ -75,39 +84,82 @@ impl ConfigProvider {
                     self.consume(x, &mut |_| {}).unwrap();
                 },
                 None => {
-                    self.skip_current();
+                    self.skip_current()?;
                 },
             }
         }
+
+        return Ok(());
+    }
+
+    /// Handle a special line. Marked by starting with !
+    fn handle_special(&mut self) -> Result<(), String> {
+        /* This is guaranteed to return Some, or handle_special wouldn't be called */
+        let line = self.get_next().unwrap();
+
+        if line.starts_with("!include ") {
+            match line.split(' ').nth(1) {
+                Some(x) => {
+                    self.child = Some(Box::new(provider_from_file(x)));
+                    return Ok(());
+                },
+                None => {
+                    return Err("Found !include, but couldn't figure out which file to include".to_string());
+                },
+            }
+        }
+
+        return Err(format!("Failed while parsing config. Found special line: {}, which I can't handle.", line));
     }
 
     /// Read the next line from 
-    fn get_next_line(&mut self) {
+    fn get_next_line(&mut self) -> Result<(), String> {
+        if let Some(ref mut child) = self.child {
+            child.get_next_line()?;
+            if !child.is_at_end() {
+                return Ok(());
+            }
+        }
+        /* This should be part of the previous if, but the borrow checker doesn't allow that (yet)
+         * since child is borrowed there
+         */
+        self.child = None;
+
         if let Some(line) = self.line_it.next() {
             self.line_str = line.1;
             self.line = line.0;
             self.column = 0;
 
-            self.skip_whitespace();
-            if self.peek_char() == Some('#') {
-                self.skip_current();
+            self.skip_whitespace()?;
+            match self.peek_char() {
+                Some('#') => {
+                    self.skip_current()?;
+                },
+                Some('!') => {
+                    self.handle_special()?;
+                },
+                _ => {},
             }
         }
+
+        return Ok(());
     }
 
     /// Get a ConfigProvider form a line iterator enumerator.
     /// # Arguments
     /// * `it`: The line iterator
     /// * `file`: The file name (should be a global path)
-    // TODO: Enforce the path!
     pub fn new_with_provider<J>(it: J, file: String) -> Self
         where J: std::iter::Iterator<Item=(usize, String)> + 'static {
         let mut ret = ConfigProvider { file: file,
             line: 1, column: 0,
-            line_str: String::from(""),
-            line_it: Box::new(it)
+            line_str: String::new(),
+            line_it: Box::new(it),
+            child: None,
         };
-        ret.get_next_line();
+
+        //TODO: Bother to change this into propagation
+        ret.get_next_line().unwrap();
 
         return ret;
     }
@@ -145,14 +197,51 @@ impl ConfigProvider {
 
         self.column = self.column + count;
 
-        self.skip_whitespace();
+        match self.skip_whitespace() {
+            Err(x) => {
+                self.print_error(0, fun);
+                fun(x);
+                return Err(ParseError::Final);
+            },
+            Ok(()) => {},
+        }
 
         if self.column == self.line_str.len() {
-            self.get_next_line();
+            self.get_next_line()?;
         }
 
         return Ok(());
     }
+}
+
+/// Get a provider from a single file.
+/// This is used to build the nesting providers
+pub fn provider_from_file<P: AsRef<Path>>(path: P) -> ConfigProvider {
+    let p = path.as_ref();
+    let f = File::open(p).unwrap();
+
+    let lines = BufReader::new(f).lines().map(|x| x.unwrap()).enumerate();
+
+    let path_str = p.to_str().unwrap_or_else(|| "ERROR");
+
+    return ConfigProvider::new_with_provider(lines, path_str.into());
+}
+
+/// Get a provider for a single file, and wrap it in {}, so the final config doesn't have to be in
+/// an initial {} wrapper.
+pub fn provider_from_file_wrap<P: AsRef<Path>>(path: P) -> ConfigProvider {
+    let p = path.as_ref();
+    let f = File::open(p).unwrap();
+
+    let open = std::iter::once((0, "{".into()));
+    let lines = BufReader::new(f).lines().map(|x| x.unwrap()).enumerate();
+    let close = std::iter::once((usize::max_value(), "}".into()));
+
+    let fin = open.chain(lines).chain(close);
+
+    let path_str = p.to_str().unwrap_or_else(|| "ERROR");
+
+    return ConfigProvider::new_with_provider(fin, path_str.into());
 }
 
 
@@ -162,7 +251,7 @@ mod test {
 
     #[test]
     fn test_config_provider_string() {
-        let mut provider = ConfigProvider::new_from_line("This is a line".to_string());
+        let mut provider = ConfigProvider::new_from_str("This is a line");
 
         assert!(provider.get_next() == Some("This is a line".to_string()));
 

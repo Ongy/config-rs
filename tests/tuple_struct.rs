@@ -17,7 +17,7 @@ fn test_tuple_struct_format() {
 fn test_tuple_struct_parse() {
     let mut builder = String::new();
     let mut fun = |x: String| builder.push_str(x.as_str());
-    let mut provider = rs_config::ConfigProvider::new_from_line("( \"TestStr1\", 'C' )".to_string());
+    let mut provider = rs_config::ConfigProvider::new_from_str("( \"TestStr1\", 'C' )");
     assert!(TupleStruct::parse_from(&mut provider, &mut fun) == Ok(TupleStruct("TestStr1".to_string(), 'C')));
     assert!(provider.get_next() == None);
 }

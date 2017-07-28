@@ -56,7 +56,7 @@ mod test {
     fn test_string_parse() {
         let mut builder = String::new();
         let mut fun = |x: String| builder.push_str(x.as_str());
-        let mut provider = ConfigProvider::new_from_line("\"This is\\n \\\"a line\"var".to_string());
+        let mut provider = ConfigProvider::new_from_str("\"This is\\n \\\"a line\"var");
 
         let val = String::parse_from(&mut provider, &mut fun);
         assert!(val == Ok("This is\n \"a line".to_string()));
@@ -64,5 +64,4 @@ mod test {
         let nxt = provider.get_next();
         assert!(nxt == Some("var".to_string()));
     }
-
 }
