@@ -7,8 +7,9 @@ use proc_macro::TokenStream;
 
 use std::collections::HashSet;
 
-fn get_attrs(field: &syn::Field) -> Option<&Vec<syn::NestedMetaItem>> {
-    for ref attr in &field.attrs {
+
+fn get_meta_attrs(attrs: &Vec<syn::Attribute>) -> Option<&Vec<syn::NestedMetaItem>> {
+    for attr in attrs {
         match attr.value {
             syn::MetaItem::List(ref id, ref items) => {
                 if id == "ConfigAttrs" {
@@ -20,6 +21,10 @@ fn get_attrs(field: &syn::Field) -> Option<&Vec<syn::NestedMetaItem>> {
     }
 
     return None;
+}
+
+fn get_attrs(field: &syn::Field) -> Option<&Vec<syn::NestedMetaItem>> {
+    return get_meta_attrs(&field.attrs);
 }
 
 fn find_attr_lit<'a>(name: &str, attrs: &'a Vec<syn::NestedMetaItem>) -> Option<&'a syn::Lit> {
@@ -315,6 +320,24 @@ fn impl_merge(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
         fn merge(&mut self, rhs: Self) -> Result<(), ()>
     });
     tok.append("{"); /* open merge function */
+
+    match get_meta_attrs(&ast.attrs).and_then(|x| find_attr_lit("merge", x)) {
+        Some(x) => {
+            match x {
+                &syn::Lit::Str(ref val, _) => {
+                    tok.append("return self.");
+                    tok.append(val);
+                    tok.append("(rhs); }");
+                    return;
+                }
+                _ => {
+                    panic!("merge must be a string that's a function name!");
+                }
+            }
+        },
+        None =>  { },
+    }
+
     match ast.body {
         /* Handle Enums */
         syn::Body::Enum(ref vars) => {
@@ -336,7 +359,6 @@ fn impl_merge(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
                             },
                         });
                     },
-                    // TODO: Implement tuple merging
                     syn::VariantData::Tuple(ref fields) => {
                         let mut partial = quote::Tokens::new();
                         let mut lhs_fields = quote::Tokens::new();

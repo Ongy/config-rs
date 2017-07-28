@@ -70,7 +70,6 @@ pub trait ConfigAble
     fn parse_from<F>(provider: &mut ConfigProvider, fun: &mut F) -> Result<Self, ParseError>
        where  F: FnMut(String);
 
-    // TODO: Should the error type be something more serious?
     /// Get a default value for this type
     fn get_default() -> Result<Self, ()>;
 
