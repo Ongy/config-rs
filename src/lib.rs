@@ -75,6 +75,7 @@ pub trait ConfigAble
 
     /// Try to merge an object of this type with another (in case multiple are specified in the
     /// config)
+    /* TODO: Add the error reporting function */
     fn merge(&mut self, rhs: Self) -> Result<(), ()>;
 }
 
