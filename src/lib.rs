@@ -88,7 +88,7 @@ pub fn read_or_exit<T, P: AsRef<Path>>(path: P) -> T
     match ret {
         Ok(x) => {return x;},
         Err(_) => {
-            writeln!(&mut std::io::stderr(), "Failed to parse {}", T::get_name()).unwrap();
+            write!(&mut std::io::stderr(), "Failed to parse {}", T::get_name()).unwrap();
             let mut set = std::collections::HashSet::new();
             T::get_format(&mut set, &mut |x| writeln!(&mut std::io::stderr(), "{}", x).unwrap());
 
