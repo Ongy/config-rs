@@ -60,6 +60,38 @@ impl<T> ConfigAble for Vec<T>
     }
 }
 
+impl<T> ConfigAble for Box<[T]>
+    where T: ConfigAble {
+    fn get_format<F>(set: &mut std::collections::HashSet<String>, fun: &mut F)
+        where F: FnMut(&str) {
+        // TODO: Re-do the newline appending
+        fun(format!("Box<[{}]>: [ {}, {}, ... ]", T::get_name(), T::get_name(), T::get_name()).as_str());
+
+        let key = T::get_name().to_string();
+        if !set.contains(&key) {
+            set.insert(T::get_name().to_string());
+
+            fun("\n");
+            T::get_format(set, fun);
+        }
+    }
+
+    fn get_name() -> &'static str {
+        concat!("Box<[", /*T::get_name(),*/ "]>")
+    }
+
+    fn parse_from<F>(provider: &mut ConfigProvider, fun: &mut F) -> Result<Self, ParseError>
+        where F: FnMut(String) {
+        let ret: Vec<T> = ConfigAble::parse_from(provider, fun)?;
+
+        return Ok(ret.into_boxed_slice());
+    }
+
+    fn get_default() -> Result<Self, ()> { Err(()) }
+
+    fn merge(&mut self, _: Self) -> Result<(), ()> { Err(()) }
+}
+
 
 #[cfg(test)]
 mod test {

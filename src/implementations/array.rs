@@ -4,7 +4,6 @@ use ::ConfigAble;
 use ParseError;
 
 use std::vec::Vec;
-use std::boxed::Box;
 
 impl<T: ConfigAble> ConfigAble for [T;4] {
     fn get_format<F>(_: &mut std::collections::HashSet<String>, fun: &mut F) 
@@ -33,7 +32,7 @@ impl<T: ConfigAble> ConfigAble for [T;4] {
         Ok([T::get_default()?, T::get_default()?, T::get_default()?, T::get_default()?])
     }
 
-    fn merge(&mut self, rhs: Self) -> Result<(), ()> {
+    fn merge(&mut self, _: Self) -> Result<(), ()> {
         return Err(());
 //        unsafe {
 //            let ptr = rhs.as_ptr();
