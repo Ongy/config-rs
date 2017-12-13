@@ -76,7 +76,7 @@ pub trait ConfigAble
     /// Try to merge an object of this type with another (in case multiple are specified in the
     /// config)
     /* TODO: Add the error reporting function */
-    fn merge(&mut self, rhs: Self) -> Result<(), ()>;
+    fn merge(&mut self, _rhs: Self) -> Result<(), ()> { Err(()) }
 }
 
 pub fn read_or_exit<T, P: AsRef<Path>>(path: P) -> T

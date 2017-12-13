@@ -5,5 +5,9 @@ authors = ["Markus Ongyerth <ongy@ongy.net>"]
 
 [dependencies]
 rs-config-derive = { path = "rs-config-derive" }
+log = { version = "0.3.8", optional = true }
 
 [lib]
+
+[features]
+config = ["log"]
