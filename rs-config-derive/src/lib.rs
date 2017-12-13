@@ -263,6 +263,22 @@ fn impl_get_default(ast: &syn::MacroInput, tok: &mut quote::Tokens) {
     tok.append(quote!{fn get_default() -> Result<Self, ()>});
     tok.append("{"); /* Open get_default() function */
 
+    if let Some(x) =  get_meta_attrs(&ast.attrs).and_then(|x| find_attr_lit("default", x)) {
+        match x {
+            &syn::Lit::Str(ref val, _) => {
+                tok.append("Ok(");
+                tok.append(val);
+                tok.append(")");
+            }
+            _ => {
+                panic!("merge must be a string that's a function name!");
+            }
+        }
+
+        tok.append("}"); /* close get_default() function */
+        return;
+    }
+
     match ast.body {
         syn::Body::Enum(_) => { tok.append(quote!{ return Err(()); }); },
         syn::Body::Struct(ref data) => {
